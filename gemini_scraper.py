@@ -203,44 +203,123 @@ def main():
         page.screenshot(path=screenshot_path, full_page=True)
         generated_files.append("response_screenshot.png")
 
-        # Scrape & save generated images or videos if any
-        images = page.query_selector_all('model-response img, div[data-test-id="conversation-turn"] img, .generated-image img')
+        # Scrape & save generated images (extract actual full-res image files)
+        images = page.query_selector_all('model-response img, div[data-test-id="conversation-turn"] img, .generated-image img, img[src*="googleusercontent"], img[src*="blob:"]')
         img_idx = 1
         for img in images:
-            src = img.get_attribute("src")
-            if src and (src.startswith("http") or src.startswith("data:")):
-                # Filter out standard UI icons
-                if "googleusercontent" in src or "blob:" in src or "generativeai" in src or "lh3.googleusercontent.com" in src:
-                    try:
-                        img_filename = f"generated_image_{img_idx}.png"
-                        img_path = os.path.join(args.output_dir, img_filename)
-                        if src.startswith("http"):
-                            download_file(src, img_path)
-                        else:
-                            img.screenshot(path=img_path)
-                        generated_files.append(img_filename)
-                        print(f"📸 Downloaded generated image #{img_idx}")
-                        img_idx += 1
-                    except Exception as e:
-                        print(f"⚠️ Error saving image #{img_idx}: {e}")
+            try:
+                src = img.get_attribute("src") or ""
+                # Skip standard UI icons / avatars
+                if any(bad in src.lower() for bad in ["avatar", "favicon", "google_logo", "user_photo", "account"]):
+                    continue
 
-        # Check for generated videos (video element or downloadable video links)
-        videos = page.query_selector_all('model-response video, div[data-test-id="conversation-turn"] video, a[href*=".mp4"]')
+                if src and (src.startswith("http") or src.startswith("blob:") or src.startswith("data:")):
+                    img_filename = f"generated_image_{img_idx}.png"
+                    img_path = os.path.join(args.output_dir, img_filename)
+                    saved = False
+
+                    # Try direct download if http URL
+                    if src.startswith("http") and ("lh3.googleusercontent" in src or "generativeai" in src or "ggpht" in src):
+                        try:
+                            download_file(src, img_path)
+                            saved = True
+                            print(f"📸 Downloaded full HTTP image #{img_idx}")
+                        except Exception as dl_err:
+                            print(f"⚠️ Direct download failed: {dl_err}")
+
+                    # Try canvas / blob extraction in browser context for full resolution
+                    if not saved:
+                        b64_data = page.evaluate("""(element) => {
+                            try {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = element.naturalWidth || element.clientWidth || 1024;
+                                canvas.height = element.naturalHeight || element.clientHeight || 1024;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(element, 0, 0, canvas.width, canvas.height);
+                                return canvas.toDataURL('image/png').split(',')[1];
+                            } catch (e) {
+                                return null;
+                            }
+                        }""", img)
+
+                        if b64_data:
+                            import base64
+                            with open(img_path, "wb") as f:
+                                f.write(base64.b64decode(b64_data))
+                            saved = True
+                            print(f"📸 Extracted full-res canvas image #{img_idx}")
+
+                    if not saved:
+                        img.screenshot(path=img_path)
+                        saved = True
+                        print(f"📸 Saved image screenshot #{img_idx}")
+
+                    if saved:
+                        generated_files.append(img_filename)
+                        img_idx += 1
+            except Exception as e:
+                print(f"⚠️ Error saving image #{img_idx}: {e}")
+
+        # Check for generated videos (video element or downloadable video links / blob)
+        videos = page.query_selector_all('model-response video, div[data-test-id="conversation-turn"] video, source[type*="video"], a[href*=".mp4"]')
         vid_idx = 1
         for vid in videos:
-            src = vid.get_attribute("src") or vid.get_attribute("href")
-            if src and src.startswith("http"):
-                try:
+            try:
+                src = vid.get_attribute("src") or vid.get_attribute("href")
+                if src:
                     vid_filename = f"generated_video_{vid_idx}.mp4"
                     vid_path = os.path.join(args.output_dir, vid_filename)
-                    download_file(src, vid_path)
-                    generated_files.append(vid_filename)
-                    print(f"🎥 Downloaded generated video #{vid_idx}")
-                    vid_idx += 1
-                except Exception as e:
-                    print(f"⚠️ Error downloading video #{vid_idx}: {e}")
+                    if src.startswith("http"):
+                        download_file(src, vid_path)
+                        generated_files.append(vid_filename)
+                        print(f"🎥 Downloaded generated video #{vid_idx}")
+                        vid_idx += 1
+                    elif src.startswith("blob:"):
+                        b64_vid = page.evaluate("""async (url) => {
+                            try {
+                                const response = await fetch(url);
+                                const blob = await response.blob();
+                                return new Promise((resolve) => {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                                    reader.readAsDataURL(blob);
+                                });
+                            } catch (e) {
+                                return null;
+                            }
+                        }""", src)
+                        if b64_vid:
+                            import base64
+                            with open(vid_path, "wb") as f:
+                                f.write(base64.b64decode(b64_vid))
+                            generated_files.append(vid_filename)
+                            print(f"🎥 Extracted video blob #{vid_idx}")
+                            vid_idx += 1
+            except Exception as e:
+                print(f"⚠️ Error downloading video #{vid_idx}: {e}")
 
         browser.close()
+
+    # Encode primary generated media file to base64 for n8n payload
+    primary_media_b64 = None
+    primary_media_type = None
+    primary_media_name = None
+
+    media_candidates = [f for f in generated_files if f != "response_screenshot.png"]
+    if media_candidates:
+        target_file = media_candidates[0]
+        target_path = os.path.join(args.output_dir, target_file)
+        if os.path.exists(target_path):
+            import base64
+            with open(target_path, "rb") as mf:
+                primary_media_b64 = base64.b64encode(mf.read()).decode("utf-8")
+            primary_media_name = target_file
+            if target_file.endswith(".mp4"):
+                primary_media_type = "video/mp4"
+            elif target_file.endswith(".png"):
+                primary_media_type = "image/png"
+            elif target_file.endswith(".jpg") or target_file.endswith(".jpeg"):
+                primary_media_type = "image/jpeg"
 
     # Save output metadata
     result_data = {
@@ -249,6 +328,9 @@ def main():
         "image_url": args.image_url,
         "response_text": text_response,
         "generated_files": generated_files,
+        "primary_media_name": primary_media_name,
+        "primary_media_b64": primary_media_b64,
+        "primary_media_type": primary_media_type,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
     }
 

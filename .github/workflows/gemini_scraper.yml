@@ -82,16 +82,40 @@ jobs:
       - name: Notify n8n (Success)
         if: success() && inputs.n8n_webhook != ''
         run: |
-          curl -s -X POST "${{ github.event.inputs.n8n_webhook }}" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"status\": \"success\",
-              \"run_id\": \"${{ github.run_id }}\",
-              \"repo\": \"${{ github.repository }}\",
-              \"prompt\": \"${{ github.event.inputs.prompt }}\",
-              \"artifact_name\": \"gemini-output-${{ github.run_id }}\"
-            }"
-          echo "✅ Notified n8n Webhook"
+          python -c "
+          import json, os, urllib.request
+
+          webhook_url = '${{ github.event.inputs.n8n_webhook }}'
+          result_path = 'outputs/result.json'
+
+          payload = {
+              'status': 'success',
+              'run_id': '${{ github.run_id }}',
+              'repo': '${{ github.repository }}',
+              'prompt': '${{ github.event.inputs.prompt }}',
+              'artifact_name': 'gemini-output-${{ github.run_id }}'
+          }
+
+          if os.path.exists(result_path):
+              with open(result_path, 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+              payload['response_text'] = data.get('response_text', '')
+              payload['generated_files'] = data.get('generated_files', [])
+              payload['primary_media_name'] = data.get('primary_media_name')
+              payload['primary_media_b64'] = data.get('primary_media_b64')
+              payload['primary_media_type'] = data.get('primary_media_type')
+
+          req = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload).encode('utf-8'),
+              headers={'Content-Type': 'application/json'}
+          )
+          try:
+              with urllib.request.urlopen(req) as resp:
+                  print('✅ Notified n8n Webhook with full text response and media payload')
+          except Exception as e:
+              print(f'⚠️ Webhook notification failed: {e}')
+          "
 
       - name: Notify n8n (Failure)
         if: failure() && inputs.n8n_webhook != ''
