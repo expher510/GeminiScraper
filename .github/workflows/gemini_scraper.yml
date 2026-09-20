@@ -8,9 +8,18 @@ on:
         required: true
         type: string
       image_url:
-        description: 'Optional image URL to attach to the prompt'
+        description: 'Optional image/video URL to attach to the prompt'
         required: false
         type: string
+      media_b64:
+        description: 'Optional Base64 encoded video or image content'
+        required: false
+        type: string
+      media_ext:
+        description: 'File extension for media_b64 (e.g. .mp4, .png, .jpg)'
+        required: false
+        type: string
+        default: '.mp4'
       cookies_b64:
         description: 'Cookies file content (Base64 encoded JSON)'
         required: true
@@ -48,14 +57,16 @@ jobs:
       - name: Run Gemini Scraper
         id: scraper
         run: |
-          IMAGE_ARG=""
-          if [ -n "${{ github.event.inputs.image_url }}" ]; then
-            IMAGE_ARG="--image-url '${{ github.event.inputs.image_url }}'"
+          MEDIA_ARG=""
+          if [ -n "${{ github.event.inputs.media_b64 }}" ]; then
+            MEDIA_ARG="--media-b64 '${{ github.event.inputs.media_b64 }}' --media-ext '${{ github.event.inputs.media_ext }}'"
+          elif [ -n "${{ github.event.inputs.image_url }}" ]; then
+            MEDIA_ARG="--image-url '${{ github.event.inputs.image_url }}'"
           fi
 
           python gemini_scraper.py \
             --prompt "${{ github.event.inputs.prompt }}" \
-            $IMAGE_ARG \
+            $MEDIA_ARG \
             --cookies-file cookies.json \
             --output-dir outputs
 

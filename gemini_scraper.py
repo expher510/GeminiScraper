@@ -82,7 +82,9 @@ def load_cookies(cookies_path):
 def main():
     parser = argparse.ArgumentParser(description="Gemini Web Automation Scraper")
     parser.add_argument("--prompt", required=True, help="Text prompt to send to Gemini")
-    parser.add_argument("--image-url", help="Optional URL of an image to send")
+    parser.add_argument("--image-url", help="Optional URL of an image/video to send")
+    parser.add_argument("--media-b64", help="Optional Base64 encoded image/video binary content")
+    parser.add_argument("--media-ext", default=".mp4", help="Extension for media-b64 file (.mp4, .png, .jpg)")
     parser.add_argument("--cookies-file", default="cookies.txt", help="Path to cookies file (.txt or .json)")
     parser.add_argument("--output-dir", default="outputs", help="Directory to save output files and metadata")
     args = parser.parse_args()
@@ -102,7 +104,19 @@ def main():
     print(f"🔑 Successfully loaded {len(cookies)} cookies.")
 
     local_image_path = None
-    if args.image_url:
+    if args.media_b64:
+        print("📥 Decoding binary media from Base64 string...")
+        try:
+            ext = args.media_ext if args.media_ext.startswith(".") else f".{args.media_ext}"
+            local_image_path = os.path.join(args.output_dir, f"input_media{ext}")
+            import base64
+            with open(local_image_path, "wb") as mf:
+                mf.write(base64.b64decode(args.media_b64.strip()))
+            print(f"✅ Binary media decoded and saved successfully ({local_image_path}).")
+        except Exception as e:
+            print(f"⚠️ Failed to decode binary media_b64: {e}")
+            local_image_path = None
+    elif args.image_url:
         print(f"📥 Downloading media from: {args.image_url}")
         try:
             url_clean = args.image_url.split("?")[0]
