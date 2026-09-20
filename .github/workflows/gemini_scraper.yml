@@ -19,6 +19,7 @@ on:
         description: 'n8n webhook URL for result callback'
         required: false
         type: string
+        default: 'https://n8n-p4oh.srv1867849.hstgr.cloud/webhook/gemini'
 
 jobs:
   scrape-gemini:
