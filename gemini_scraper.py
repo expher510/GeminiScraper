@@ -103,13 +103,17 @@ def main():
 
     local_image_path = None
     if args.image_url:
-        print(f"📥 Downloading image from: {args.image_url}")
+        print(f"📥 Downloading media from: {args.image_url}")
         try:
-            local_image_path = os.path.join(args.output_dir, "input_image.jpg")
+            url_clean = args.image_url.split("?")[0]
+            ext = os.path.splitext(url_clean)[1].lower()
+            if not ext or len(ext) > 5:
+                ext = ".jpg"
+            local_image_path = os.path.join(args.output_dir, f"input_media{ext}")
             download_file(args.image_url, local_image_path)
-            print("✅ Image downloaded successfully.")
+            print(f"✅ Media downloaded successfully ({local_image_path}).")
         except Exception as e:
-            print(f"⚠️ Failed to download image from URL: {e}")
+            print(f"⚠️ Failed to download media from URL: {e}")
             local_image_path = None
 
     with sync_playwright() as p:
@@ -149,13 +153,13 @@ def main():
             browser.close()
             sys.exit(1)
 
-        # Upload image if provided
+        # Upload image / video / document media if provided
         if local_image_path and os.path.exists(local_image_path):
             file_input = page.query_selector('input[type="file"]')
             if file_input:
                 file_input.set_input_files(local_image_path)
-                print("📸 Attached image input file.")
-                time.sleep(3)
+                print(f"📎 Attached input media file: {local_image_path}")
+                time.sleep(5) # Allow Gemini UI to process/upload media
 
         # Type prompt
         print(f"💬 Submitting prompt: {args.prompt}")
