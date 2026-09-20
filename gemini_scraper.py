@@ -290,21 +290,29 @@ def main():
             except Exception as e:
                 print(f"⚠️ Error saving image #{img_idx}: {e}")
 
-        # Check for generated videos (video element or downloadable video links / blob)
-        videos = page.query_selector_all('model-response video, div[data-test-id="conversation-turn"] video, source[type*="video"], a[href*=".mp4"]')
+        # Check for generated videos (video element, downloadable video links, blob URLs)
+        videos = page.query_selector_all('model-response video, div[data-test-id="conversation-turn"] video, video source, a[href*=".mp4"], a[download*=".mp4"], a[aria-label*="video"], a[aria-label*="Video"]')
+        if not videos:
+            videos = page.query_selector_all('video[src], source[src*="video"], source[src*="blob:"]')
+
         vid_idx = 1
         for vid in videos:
             try:
                 src = vid.get_attribute("src") or vid.get_attribute("href")
-                if src:
+                if src and src not in [f for f in generated_files]:
                     vid_filename = f"generated_video_{vid_idx}.mp4"
                     vid_path = os.path.join(args.output_dir, vid_filename)
+                    saved_vid = False
+
                     if src.startswith("http"):
-                        download_file(src, vid_path)
-                        generated_files.append(vid_filename)
-                        print(f"🎥 Downloaded generated video #{vid_idx}")
-                        vid_idx += 1
-                    elif src.startswith("blob:"):
+                        try:
+                            download_file(src, vid_path)
+                            saved_vid = True
+                            print(f"🎥 Downloaded generated video #{vid_idx}")
+                        except Exception as dl_err:
+                            print(f"⚠️ Direct video download failed: {dl_err}")
+
+                    if not saved_vid and src.startswith("blob:"):
                         b64_vid = page.evaluate("""async (url) => {
                             try {
                                 const response = await fetch(url);
@@ -322,9 +330,12 @@ def main():
                             import base64
                             with open(vid_path, "wb") as f:
                                 f.write(base64.b64decode(b64_vid))
-                            generated_files.append(vid_filename)
+                            saved_vid = True
                             print(f"🎥 Extracted video blob #{vid_idx}")
-                            vid_idx += 1
+
+                    if saved_vid:
+                        generated_files.append(vid_filename)
+                        vid_idx += 1
             except Exception as e:
                 print(f"⚠️ Error downloading video #{vid_idx}: {e}")
 
