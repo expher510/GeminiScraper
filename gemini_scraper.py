@@ -203,14 +203,31 @@ def main():
         page.screenshot(path=screenshot_path, full_page=True)
         generated_files.append("response_screenshot.png")
 
-        # Scrape & save generated images (extract actual full-res image files)
-        images = page.query_selector_all('model-response img, div[data-test-id="conversation-turn"] img, .generated-image img, img[src*="googleusercontent"], img[src*="blob:"]')
+        # Scrape & save ONLY actual generated images inside model response
+        images = page.query_selector_all('model-response img, div[data-test-id="conversation-turn"] img, .generated-image img')
+        if not images:
+            # Fallback if custom element wrapper is used
+            images = page.query_selector_all('img[src*="blob:"], img[src*="googleusercontent"]')
+
         img_idx = 1
         for img in images:
             try:
                 src = img.get_attribute("src") or ""
-                # Skip standard UI icons / avatars
-                if any(bad in src.lower() for bad in ["avatar", "favicon", "google_logo", "user_photo", "account"]):
+
+                # Evaluate natural dimensions and filter out profile avatars / small icons
+                dims = page.evaluate("""(el) => {
+                    return {
+                        w: el.naturalWidth || el.clientWidth || 0,
+                        h: el.naturalHeight || el.clientHeight || 0,
+                        isAvatar: !!el.closest('button[aria-label*="Account"], header, .gb_d, [role="navigation"]')
+                    };
+                }""", img)
+
+                # Skip small icons, Google account avatars (like 32x32, 96x96 "a" avatar), or header elements
+                if dims.get("isAvatar") or dims.get("w", 0) < 150 or dims.get("h", 0) < 150:
+                    continue
+
+                if any(bad in src.lower() for bad in ["avatar", "favicon", "google_logo", "user_photo", "account", "/a/", "/a-/", "=s32", "=s64", "=s96", "=s128"]):
                     continue
 
                 if src and (src.startswith("http") or src.startswith("blob:") or src.startswith("data:")):
@@ -248,11 +265,6 @@ def main():
                                 f.write(base64.b64decode(b64_data))
                             saved = True
                             print(f"📸 Extracted full-res canvas image #{img_idx}")
-
-                    if not saved:
-                        img.screenshot(path=img_path)
-                        saved = True
-                        print(f"📸 Saved image screenshot #{img_idx}")
 
                     if saved:
                         generated_files.append(img_filename)
