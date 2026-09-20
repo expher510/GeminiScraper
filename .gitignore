@@ -1,0 +1,27 @@
+# Sensitive authentication & data files
+cookies.txt
+cookies.json
+*.cookie
+*.cookies
+
+# Output files
+outputs/
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# IDE / System
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

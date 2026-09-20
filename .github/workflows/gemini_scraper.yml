@@ -1,0 +1,108 @@
+name: Gemini Web Scraper & Generator
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Prompt text for Gemini (e.g. Generate image of a cat / answer question)'
+        required: true
+        type: string
+      image_url:
+        description: 'Optional image URL to attach to the prompt'
+        required: false
+        type: string
+      cookies_b64:
+        description: 'Cookies file content (Base64 encoded JSON)'
+        required: true
+        type: string
+      n8n_webhook:
+        description: 'n8n webhook URL for result callback'
+        required: false
+        type: string
+
+jobs:
+  scrape-gemini:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Decode and Save Cookies
+        run: |
+          echo "${{ github.event.inputs.cookies_b64 }}" | base64 --decode > cookies.json
+
+      - name: Run Gemini Scraper
+        id: scraper
+        run: |
+          IMAGE_ARG=""
+          if [ -n "${{ github.event.inputs.image_url }}" ]; then
+            IMAGE_ARG="--image-url '${{ github.event.inputs.image_url }}'"
+          fi
+
+          python gemini_scraper.py \
+            --prompt "${{ github.event.inputs.prompt }}" \
+            $IMAGE_ARG \
+            --cookies-file cookies.json \
+            --output-dir outputs
+
+      - name: Read Scraper Output
+        if: always()
+        id: parse_output
+        run: |
+          if [ -f outputs/result.json ]; then
+            RESPONSE_TEXT=$(jq -r '.response_text' outputs/result.json | head -n 20)
+            echo "response_summary<<EOF" >> $GITHUB_OUTPUT
+            echo "$RESPONSE_TEXT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "response_summary=No result generated" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Output Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemini-output-${{ github.run_id }}
+          path: outputs/
+          retention-days: 90
+
+      - name: Notify n8n (Success)
+        if: success() && inputs.n8n_webhook != ''
+        run: |
+          curl -s -X POST "${{ github.event.inputs.n8n_webhook }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"status\": \"success\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"repo\": \"${{ github.repository }}\",
+              \"prompt\": \"${{ github.event.inputs.prompt }}\",
+              \"artifact_name\": \"gemini-output-${{ github.run_id }}\"
+            }"
+          echo "✅ Notified n8n Webhook"
+
+      - name: Notify n8n (Failure)
+        if: failure() && inputs.n8n_webhook != ''
+        run: |
+          curl -s -X POST "${{ github.event.inputs.n8n_webhook }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"status\": \"error\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"repo\": \"${{ github.repository }}\",
+              \"message\": \"Gemini scraping task failed.\",
+              \"prompt\": \"${{ github.event.inputs.prompt }}\"
+            }"
+          echo "❌ Notified n8n Webhook on failure"
