@@ -127,8 +127,13 @@ def main():
         page = context.new_page()
 
         print("🌐 Navigating to Gemini Web...")
-        page.goto("https://gemini.google.com/app", wait_until="networkidle", timeout=60000)
-        time.sleep(3)
+        try:
+            page.goto("https://gemini.google.com/app", wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            print(f"⚠️ Initial navigation timeout/error: {e}. Retrying with commit wait...")
+            page.goto("https://gemini.google.com/app", wait_until="commit", timeout=60000)
+        
+        time.sleep(5)
 
         # Check if loaded properly
         page_title = page.title()
